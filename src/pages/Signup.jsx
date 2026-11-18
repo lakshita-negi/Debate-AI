@@ -1,8 +1,29 @@
-
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Eye, EyeOff } from 'lucide-react';
+import {
+  ArrowRight,
+  Eye,
+  EyeOff,
+  Mail,
+  Lock,
+  UserRound,
+  AlertCircle,
+  CheckCircle2
+} from 'lucide-react';
 import './Login.css';
+
+const STRENGTH_LABELS = ['Too weak', 'Weak', 'Fair', 'Good', 'Strong'];
+
+const getPasswordStrength = (value) => {
+  let score = 0;
+
+  if (value.length >= 8) score += 1;
+  if (/[a-z]/.test(value) && /[A-Z]/.test(value)) score += 1;
+  if (/\d/.test(value)) score += 1;
+  if (/[^A-Za-z0-9]/.test(value)) score += 1;
+
+  return score;
+};
 
 function Signup() {
   const [showPassword, setShowPassword] = useState(false);
@@ -14,6 +35,10 @@ function Signup() {
   const [loading, setLoading] = useState(false);
 
   const navigate = useNavigate();
+
+  const strength = getPasswordStrength(password);
+  const passwordsMatch = confirmPassword.length > 0 && password === confirmPassword;
+  const passwordsDiffer = confirmPassword.length > 0 && password !== confirmPassword;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -75,34 +100,43 @@ function Signup() {
           <form className="login-form" onSubmit={handleSubmit}>
             <div className="login-field">
               <label htmlFor="name">Full name</label>
-              <input
-                id="name"
-                type="text"
-                placeholder="Enter your full name"
-                autoComplete="name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-              />
+
+              <div className="login-input">
+                <UserRound size={17} className="field-icon" />
+                <input
+                  id="name"
+                  type="text"
+                  placeholder="Enter your full name"
+                  autoComplete="name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                />
+              </div>
             </div>
 
             <div className="login-field">
               <label htmlFor="email">Email address</label>
-              <input
-                id="email"
-                type="email"
-                placeholder="Enter your email address"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
+
+              <div className="login-input">
+                <Mail size={17} className="field-icon" />
+                <input
+                  id="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </div>
             </div>
 
             <div className="login-field">
               <label htmlFor="password">Password</label>
 
-              <div className="password-input-wrapper">
+              <div className="login-input password-input-wrapper">
+                <Lock size={17} className="field-icon" />
                 <input
                   id="password"
                   type={showPassword ? 'text' : 'password'}
@@ -123,25 +157,59 @@ function Signup() {
                   {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                 </button>
               </div>
+
+              {password.length > 0 && (
+                <div className="password-strength" aria-live="polite">
+                  <div className="strength-bars">
+                    {[1, 2, 3, 4].map((level) => (
+                      <span
+                        key={level}
+                        className={strength >= level ? `on level-${strength}` : ''}
+                      />
+                    ))}
+                  </div>
+                  <span className="strength-label">
+                    {STRENGTH_LABELS[strength]}
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="login-field">
               <label htmlFor="confirmPassword">Confirm password</label>
-              <input
-                id="confirmPassword"
-                type="password"
-                placeholder="Enter your password again"
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-              />
+
+              <div className="login-input">
+                <Lock size={17} className="field-icon" />
+                <input
+                  id="confirmPassword"
+                  type={showPassword ? 'text' : 'password'}
+                  className={passwordsDiffer ? 'invalid' : ''}
+                  placeholder="Enter your password again"
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                />
+              </div>
+
+              {passwordsMatch && (
+                <span className="field-hint ok">
+                  <CheckCircle2 size={14} /> Passwords match
+                </span>
+              )}
+
+              {passwordsDiffer && (
+                <span className="field-hint bad">
+                  <AlertCircle size={14} /> Passwords do not match yet
+                </span>
+              )}
             </div>
 
             {error && (
-              <p role="alert" style={{ color: '#B04757', fontSize: '14px' }}>
-                {error}
-              </p>
+              <div className="login-alert error" role="alert">
+                <AlertCircle size={17} />
+                <span>{error}</span>
+              </div>
             )}
 
             <button
@@ -149,6 +217,7 @@ function Signup() {
               className="login-submit"
               disabled={loading}
             >
+              {loading && <span className="login-spinner" />}
               {loading ? 'Creating account...' : 'Create account'}
               {!loading && <ArrowRight size={17} />}
             </button>

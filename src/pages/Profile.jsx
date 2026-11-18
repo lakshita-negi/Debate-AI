@@ -392,32 +392,48 @@ function Profile() {
         </div>
       </section>
 
+
       <section className="profile-performance-section">
         <div className="profile-section-heading">
           <div>
             <span className="profile-eyebrow">YOUR EVALUATION</span>
             <h2>Performance Breakdown</h2>
             <p>
-              Your average scores across the five debate evaluation criteria.
+              Discover where you excel and where you can continue improving.
             </p>
           </div>
         </div>
 
-        <div className="profile-performance-card">
-          {performance.map((criterion) => (
+        <div className="profile-performance-list">
+          <div className="profile-performance-header">
+            <span>DEBATE CRITERIA</span>
+            <span>AVERAGE SCORE</span>
+          </div>
+
+          {performance.map((criterion, index) => (
             <div className="profile-performance-item" key={criterion.key}>
-              <div className="profile-performance-heading">
-                <span>{criterion.label}</span>
-                <strong>{criterion.average.toFixed(1)} / 10</strong>
+              <div className="profile-performance-info">
+                <span className="profile-performance-number">
+                  {String(index + 1).padStart(2, '0')}
+                </span>
+
+                <div>
+                  <h3>{criterion.label}</h3>
+                  <p>
+                    {[
+                      'Strength and structure of your arguments',
+                      'Use of supporting facts and examples',
+                      'Ability to challenge opposing arguments',
+                      'Clarity and effectiveness of communication',
+                      'Logical thinking and topic relevance'
+                    ][index]}
+                  </p>
+                </div>
               </div>
 
-              <div className="profile-performance-track">
-                <div
-                  className="profile-performance-fill"
-                  style={{
-                    width: `${criterion.average * 10}%`
-                  }}
-                />
+              <div className="profile-performance-score">
+                <strong>{Number(criterion.average).toFixed(1)}</strong>
+                <span>/ 10</span>
               </div>
             </div>
           ))}
@@ -429,6 +445,7 @@ function Profile() {
           )}
         </div>
       </section>
+
 
       <section className="profile-recent-section">
         <div className="profile-section-heading">
@@ -468,13 +485,12 @@ function Profile() {
                 <div className="profile-recent-result">
                   {debate.status === 'COMPLETED' ? (
                     <>
-                      <span className={`profile-result-badge ${
-                        debate.winner === 'USER'
+                      <span className={`profile-result-badge ${debate.winner === 'USER'
                           ? 'profile-result-win'
                           : debate.winner === 'AI'
                             ? 'profile-result-loss'
                             : 'profile-result-draw'
-                      }`}>
+                        }`}>
                         {debate.winner === 'USER'
                           ? 'Won'
                           : debate.winner === 'AI'

@@ -1,7 +1,14 @@
-
 import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowRight, Eye, EyeOff } from 'lucide-react';
+import {
+  ArrowRight,
+  Eye,
+  EyeOff,
+  Mail,
+  Lock,
+  AlertCircle,
+  CheckCircle2
+} from 'lucide-react';
 import './Login.css';
 
 function Login() {
@@ -67,29 +74,35 @@ function Login() {
           </div>
 
           {location.state?.message && (
-            <p role="status" style={{ color: '#694F5A', fontSize: '14px' }}>
-              {location.state.message}
-            </p>
+            <div className="login-alert success" role="status">
+              <CheckCircle2 size={17} />
+              <span>{location.state.message}</span>
+            </div>
           )}
 
           <form className="login-form" onSubmit={handleSubmit}>
             <div className="login-field">
               <label htmlFor="email">Email address</label>
-              <input
-                id="email"
-                type="email"
-                placeholder="Enter your email address"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
+
+              <div className="login-input">
+                <Mail size={17} className="field-icon" />
+                <input
+                  id="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </div>
             </div>
 
             <div className="login-field">
               <label htmlFor="password">Password</label>
 
-              <div className="password-input-wrapper">
+              <div className="login-input password-input-wrapper">
+                <Lock size={17} className="field-icon" />
                 <input
                   id="password"
                   type={showPassword ? 'text' : 'password'}
@@ -112,9 +125,10 @@ function Login() {
             </div>
 
             {error && (
-              <p role="alert" style={{ color: '#B04757', fontSize: '14px' }}>
-                {error}
-              </p>
+              <div className="login-alert error" role="alert">
+                <AlertCircle size={17} />
+                <span>{error}</span>
+              </div>
             )}
 
             <button
@@ -122,6 +136,7 @@ function Login() {
               className="login-submit"
               disabled={loading}
             >
+              {loading && <span className="login-spinner" />}
               {loading ? 'Signing in...' : 'Sign in'}
               {!loading && <ArrowRight size={17} />}
             </button>

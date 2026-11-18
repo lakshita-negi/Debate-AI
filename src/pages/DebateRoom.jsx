@@ -1,4 +1,3 @@
-
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -13,7 +12,12 @@ import {
   Pause,
   Play,
   Square,
-  Keyboard
+  Keyboard,
+  RotateCcw,
+  PhoneOff,
+  Flag,
+  X,
+  Trophy
 } from 'lucide-react';
 import './DebateRoom.css';
 
@@ -37,6 +41,54 @@ const cleanAIText = (text = '') => {
 };
 
 
+const PHASE_COPY = {
+  connecting: {
+    title: 'Connecting...',
+    hint: 'Setting up your live debate session.'
+  },
+  listening: {
+    title: 'Listening',
+    hint: 'Speak naturally. DebateAI responds when you pause.'
+  },
+  you: {
+    title: "You're speaking",
+    hint: 'Make your point. You can interrupt at any time.'
+  },
+  thinking: {
+    title: 'DebateAI is thinking',
+    hint: 'Preparing a rebuttal to your argument.'
+  },
+  speaking: {
+    title: 'DebateAI is speaking',
+    hint: 'Start talking to interrupt.'
+  },
+  muted: {
+    title: 'Microphone muted',
+    hint: 'Tap the mic or press M to unmute.'
+  },
+  paused: {
+    title: 'Playback paused',
+    hint: 'Resume to continue hearing the response.'
+  }
+};
+
+const WAVE_BARS = Array.from({ length: 32 }, (_, i) => ({
+  i,
+  k: Number(
+    (
+      (0.35 + 0.65 * Math.abs(Math.sin(i * 1.9 + 1))) *
+      (1 - Math.abs(i - 15.5) / 22)
+    ).toFixed(3)
+  )
+}));
+
+const formatTime = (totalSeconds = 0) => {
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${minutes}:${seconds}`;
+};
+
+
 function DebateRoom() {
 
   const location = useLocation();
@@ -51,27 +103,39 @@ function DebateRoom() {
   const [openingLoading, setOpeningLoading] = useState(false);
   const [error, setError] = useState('');
   const [listening, setListening] = useState(false);
-  const [recognitionAvailable, setRecognitionAvailable] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [voiceSpeaking, setVoiceSpeaking] = useState(false);
   const [voicePaused, setVoicePaused] = useState(false);
   const [endingDebate, setEndingDebate] = useState(false);
+  const [micMuted, setMicMuted] = useState(false);
+  const [userTalking, setUserTalking] = useState(false);
+  const [voiceSeconds, setVoiceSeconds] = useState(0);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
 
   const messagesEndRef = useRef(null);
-  const recognitionRef = useRef(null);
-  const transcriptRef = useRef('');
   const voiceModeRef = useRef(false);
-  const loadingRef = useRef(false);
   const voiceEnabledRef = useRef(true);
-  
+  const voiceSocketRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const playbackContextRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+  const microphoneSourceRef = useRef(null);
+  const processorRef = useRef(null);
+  const muteGainRef = useRef(null);
+  const playbackSourcesRef = useRef(new Set());
+  const nextPlayTimeRef = useRef(0);
+  const currentAIChunksRef = useRef([]);
+  const lastAIChunksRef = useRef([]);
+  const loadingRef = useRef(false);
+  const stageRef = useRef(null);
+  const conversationRef = useRef(null);
+  const textareaRef = useRef(null);
+  const micAnalyserRef = useRef(null);
+  const playbackAnalyserRef = useRef(null);
+
 
   useEffect(() => {
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    setRecognitionAvailable(Boolean(SpeechRecognition));
-
     if (!debate?._id) return;
 
     const fetchDebate = async () => {
@@ -94,6 +158,7 @@ function DebateRoom() {
         }
 
         setDebate(data.debate);
+        console.log("Active Debate ID:", data.debate._id);
 
         if (
           data.debate.position === 'AGAINST' &&
@@ -133,146 +198,237 @@ function DebateRoom() {
   }, [debate?._id]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({
-      behavior: 'smooth'
+    const container = conversationRef.current;
+
+    if (container) {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+  }, [debate?.messages, loading, openingLoading, voiceMode]);
+
+  const stopAudioPlayback = () => {
+    playbackSourcesRef.current.forEach((source) => {
+      try {
+        source.stop();
+      } catch (error) {}
     });
-  }, [debate?.messages]);
 
-  const startListening = () => {
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    if (
-      !SpeechRecognition ||
-      !voiceModeRef.current ||
-      loadingRef.current ||
-      openingLoading
-    ) {
-      return;
-    }
-
-    if (recognitionRef.current) return;
-
-    const recognition = new SpeechRecognition();
-
-    recognition.lang = 'en-IN';
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-
-    transcriptRef.current = '';
-
-    recognition.onstart = () => {
-      setListening(true);
-      setError('');
-    };
-
-    recognition.onresult = (event) => {
-      transcriptRef.current = event.results[0][0].transcript;
-    };
-
-    
-    recognition.onerror = (event) => {
-      if (event.error === 'no-speech' || event.error === 'aborted') {
-        return;
-      }
-
-      setError(`Microphone error: ${event.error}. Please check your microphone permissions.`);
-
-      voiceModeRef.current = false;
-      setVoiceMode(false);
-    };
-
-    recognition.onend = () => {
-      setListening(false);
-      recognitionRef.current = null;
-
-      const spokenMessage = transcriptRef.current.trim();
-      transcriptRef.current = '';
-
-      if (!voiceModeRef.current) return;
-
-      if (spokenMessage) {
-        submitArgument(spokenMessage, true);
-      } else {
-        startListening();
-      }
-    };
-
-    recognitionRef.current = recognition;
-
-    try {
-      recognition.start();
-    } catch (err) {
-      recognitionRef.current = null;
-      setListening(false);
-      setError('Unable to start the microphone. Please try again.');
-    }
-  };
-
-  const stopSpeech = () => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-
+    playbackSourcesRef.current.clear();
+    nextPlayTimeRef.current = 0;
     setVoiceSpeaking(false);
     setVoicePaused(false);
   };
 
-  const speakText = (text, continueListening = false) => {
-    if (!text || !voiceEnabledRef.current || !('speechSynthesis' in window)) {
-      if (continueListening && voiceModeRef.current) {
-        startListening();
-      }
+  const playAudioData = async (base64Audio) => {
+    const audioContext = playbackContextRef.current;
 
+    if (!audioContext || !voiceEnabledRef.current || !base64Audio) {
       return;
     }
 
-    window.speechSynthesis.cancel();
+    try {
+      const binary = atob(base64Audio);
+      const pcmData = new Int16Array(binary.length / 2);
 
-    const utterance = new SpeechSynthesisUtterance(cleanAIText(text));
-    const voices = window.speechSynthesis.getVoices();
+      for (let i = 0; i < pcmData.length; i += 1) {
+        const low = binary.charCodeAt(i * 2);
+        const high = binary.charCodeAt(i * 2 + 1);
+        let sample = (high << 8) | low;
 
-    const preferredVoice =
-      voices.find((voice) => voice.lang.toLowerCase() === 'en-in') ||
-      voices.find((voice) => voice.lang.toLowerCase().startsWith('en-gb')) ||
-      voices.find((voice) => voice.lang.toLowerCase().startsWith('en-us'));
+        if (sample >= 0x8000) {
+          sample -= 0x10000;
+        }
 
-    if (preferredVoice) {
-      utterance.voice = preferredVoice;
-    }
+        pcmData[i] = sample;
+      }
 
-    utterance.lang = 'en-IN';
-    utterance.rate = 0.95;
-    utterance.pitch = 1;
+      const audioBuffer = audioContext.createBuffer(
+        1,
+        pcmData.length,
+        24000
+      );
+      const channel = audioBuffer.getChannelData(0);
 
-    utterance.onstart = () => {
+      for (let i = 0; i < pcmData.length; i += 1) {
+        channel[i] = pcmData[i] / 32768;
+      }
+
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(playbackAnalyserRef.current || audioContext.destination);
+
+      const startAt = Math.max(
+        audioContext.currentTime + 0.02,
+        nextPlayTimeRef.current
+      );
+
+      source.onended = () => {
+        playbackSourcesRef.current.delete(source);
+
+        if (playbackSourcesRef.current.size === 0) {
+          setVoiceSpeaking(false);
+        }
+      };
+
+      playbackSourcesRef.current.add(source);
+      source.start(startAt);
+      nextPlayTimeRef.current = startAt + audioBuffer.duration;
       setVoiceSpeaking(true);
-      setVoicePaused(false);
-    };
-
-    utterance.onend = () => {
-      setVoiceSpeaking(false);
-      setVoicePaused(false);
-
-      if (continueListening && voiceModeRef.current) {
-        startListening();
-      }
-    };
-
-    utterance.onerror = () => {
-      setVoiceSpeaking(false);
-      setVoicePaused(false);
-
-      if (continueListening && voiceModeRef.current) {
-        startListening();
-      }
-    };
-
-    window.speechSynthesis.speak(utterance);
+    } catch (audioError) {
+      console.error('Unable to play Gemini audio:', audioError);
+      setError('Unable to play the AI voice response.');
+    }
   };
 
-  const submitArgument = async (argument, fromVoice = false) => {
+  const encodeAudioForGemini = (audioData, inputSampleRate) => {
+    const targetSampleRate = 16000;
+    const ratio = inputSampleRate / targetSampleRate;
+    const outputLength = Math.floor(audioData.length / ratio);
+    const pcmBytes = new Uint8Array(outputLength * 2);
+    const dataView = new DataView(pcmBytes.buffer);
+
+    for (let i = 0; i < outputLength; i += 1) {
+      const sourceStart = Math.floor(i * ratio);
+      const sourceEnd = Math.min(
+        Math.floor((i + 1) * ratio),
+        audioData.length
+      );
+
+      let total = 0;
+      let count = 0;
+
+      for (let j = sourceStart; j < sourceEnd; j += 1) {
+        total += audioData[j];
+        count += 1;
+      }
+
+      const average = count ? total / count : 0;
+      const sample = Math.max(-1, Math.min(1, average));
+      const pcmSample = sample < 0
+        ? sample * 0x8000
+        : sample * 0x7fff;
+
+      dataView.setInt16(i * 2, pcmSample, true);
+    }
+
+    let binary = '';
+    const chunkSize = 8192;
+
+    for (let i = 0; i < pcmBytes.length; i += chunkSize) {
+      binary += String.fromCharCode(
+        ...pcmBytes.subarray(i, i + chunkSize)
+      );
+    }
+
+    return btoa(binary);
+  };
+
+  const startMicrophone = async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      }
+    });
+
+    mediaStreamRef.current = stream;
+
+    const AudioContextClass =
+      window.AudioContext || window.webkitAudioContext;
+
+    const audioContext = new AudioContextClass();
+    audioContextRef.current = audioContext;
+
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+
+    const microphoneSource = audioContext.createMediaStreamSource(stream);
+    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+    const muteGain = audioContext.createGain();
+
+    muteGain.gain.value = 0;
+
+    processor.onaudioprocess = (event) => {
+      const socket = voiceSocketRef.current;
+
+      if (!voiceModeRef.current || socket?.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      const input = event.inputBuffer.getChannelData(0);
+      const encodedAudio = encodeAudioForGemini(
+        input,
+        audioContext.sampleRate
+      );
+
+      socket.send(JSON.stringify({
+        type: 'audio',
+        data: encodedAudio,
+        mimeType: 'audio/pcm;rate=16000'
+      }));
+    };
+
+    microphoneSource.connect(processor);
+
+    const micAnalyser = audioContext.createAnalyser();
+    micAnalyser.fftSize = 512;
+    microphoneSource.connect(micAnalyser);
+    micAnalyserRef.current = micAnalyser;
+    processor.connect(muteGain);
+    muteGain.connect(audioContext.destination);
+
+    microphoneSourceRef.current = microphoneSource;
+    processorRef.current = processor;
+    muteGainRef.current = muteGain;
+    setListening(true);
+  };
+
+  const stopMicrophone = () => {
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current.onaudioprocess = null;
+      processorRef.current = null;
+    }
+
+    microphoneSourceRef.current?.disconnect();
+    microphoneSourceRef.current = null;
+    micAnalyserRef.current = null;
+
+    muteGainRef.current?.disconnect();
+    muteGainRef.current = null;
+
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+
+    setListening(false);
+  };
+
+  const cleanupVoiceResources = () => {
+    stopMicrophone();
+    stopAudioPlayback();
+
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch((error) => {
+        console.error('Microphone audio context cleanup error:', error);
+      });
+      audioContextRef.current = null;
+    }
+
+    if (playbackContextRef.current) {
+      playbackContextRef.current.close().catch((error) => {
+        console.error('Playback audio context cleanup error:', error);
+      });
+      playbackContextRef.current = null;
+      playbackAnalyserRef.current = null;
+    }
+  };
+
+  const submitArgument = async (argument) => {
     const trimmedMessage = argument.trim();
 
     if (
@@ -310,63 +466,214 @@ function DebateRoom() {
       }
 
       setDebate(data.debate);
-
-      if (!fromVoice) {
-        setMessage('');
-      }
-
-      if (fromVoice && voiceModeRef.current) {
-        speakText(data.aiResponse, true);
-      }
-
+      setMessage('');
     } catch (err) {
       setError(err.message);
-
     } finally {
       loadingRef.current = false;
       setLoading(false);
     }
   };
 
-  const startVoiceDebate = () => {
-    if (openingLoading) return;
-    if (!recognitionAvailable) {
-      setError('Voice input is not supported. Please use Chrome or Edge.');
+  const startVoiceDebate = async () => {
+    if (openingLoading || voiceModeRef.current) return;
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError('Microphone access is unavailable. Open the app on localhost or HTTPS and check browser permissions.');
       return;
     }
 
-    if (!('speechSynthesis' in window)) {
-      setError('AI voice playback is not supported in this browser.');
-      return;
-    }
+    try {
+      setError('');
+      setVoiceMode(true);
+      setVoiceEnabled(true);
+      setMicMuted(false);
+      voiceEnabledRef.current = true;
+      voiceModeRef.current = true;
+      currentAIChunksRef.current = [];
+      lastAIChunksRef.current = [];
 
-    voiceModeRef.current = true;
-    setVoiceMode(true);
-    setVoiceEnabled(true);
-    voiceEnabledRef.current = true;
-    setError('');
+      const AudioContextClass =
+        window.AudioContext || window.webkitAudioContext;
 
-    const latestAIMessage = [...(debate?.messages || [])]
-      .reverse()
-      .find((item) => item.role === 'AI');
+      if (!AudioContextClass) {
+        throw new Error('Web Audio is not supported in this browser.');
+      }
 
-    if (latestAIMessage?.content) {
-      speakText(latestAIMessage.content, true);
-    } else {
-      startListening();
+      playbackContextRef.current = new AudioContextClass();
+      await playbackContextRef.current.resume();
+
+      const playbackAnalyser = playbackContextRef.current.createAnalyser();
+      playbackAnalyser.fftSize = 512;
+      playbackAnalyser.connect(playbackContextRef.current.destination);
+      playbackAnalyserRef.current = playbackAnalyser;
+
+      const socketProtocol = window.location.protocol === 'https:'
+        ? 'wss:'
+        : 'ws:';
+      const socketHost = window.location.hostname === 'localhost' ? 'localhost:5000' : window.location.host;
+      const socketUrl = `${socketProtocol}//${socketHost}/api/debates/voice`;
+
+      const socket = new WebSocket(socketUrl);
+      voiceSocketRef.current = socket;
+
+      socket.onopen = () => {
+        socket.send(JSON.stringify({
+          type: 'start',
+          token: localStorage.getItem('token'),
+          debateId: debate._id
+        }));
+      };
+
+      socket.onmessage = async (event) => {
+        let data;
+
+        try {
+          data = JSON.parse(event.data);
+        } catch (parseError) {
+          console.error('Invalid voice server message:', parseError);
+          return;
+        }
+
+        if (data.type === 'ready') {
+          try {
+            await startMicrophone();
+          } catch (microphoneError) {
+            setError(microphoneError.message || 'Unable to access your microphone.');
+            endVoiceDebate();
+          }
+          return;
+        }
+
+        if (data.type === 'transcript') {
+          setDebate((currentDebate) => {
+            if (!currentDebate) return currentDebate;
+
+            return {
+              ...currentDebate,
+              messages: [
+                ...(currentDebate.messages || []),
+                {
+                  role: data.role,
+                  content: data.text,
+                  _id: `live-${Date.now()}-${Math.random()}`
+                }
+              ]
+            };
+          });
+          return;
+        }
+
+        if (data.type === 'audio') {
+          currentAIChunksRef.current.push(data.data);
+
+          if (voiceEnabledRef.current) {
+            await playAudioData(data.data);
+          }
+          return;
+        }
+
+        if (data.type === 'interrupted') {
+          stopAudioPlayback();
+          currentAIChunksRef.current = [];
+          return;
+        }
+
+        if (data.type === 'turnComplete') {
+          if (currentAIChunksRef.current.length > 0) {
+            lastAIChunksRef.current = currentAIChunksRef.current;
+            currentAIChunksRef.current = [];
+          }
+
+          if (playbackSourcesRef.current.size === 0) {
+            setVoiceSpeaking(false);
+          }
+          return;
+        }
+
+        if (data.type === 'error') {
+          setError(data.message || 'The live voice session encountered an error.');
+          return;
+        }
+
+        if (data.type === 'closed') {
+          setVoiceSpeaking(false);
+        }
+      };
+
+      socket.onerror = () => {
+        if (voiceModeRef.current) {
+          setError('Unable to connect to the live voice server. Check that the backend is running.');
+        }
+      };
+
+      socket.onclose = () => {
+        if (voiceModeRef.current) {
+          cleanupVoiceResources();
+          voiceModeRef.current = false;
+          setVoiceMode(false);
+        }
+      };
+    } catch (startError) {
+      setError(startError.message || 'Unable to start the live voice debate.');
+      endVoiceDebate();
     }
   };
 
   const endVoiceDebate = () => {
     voiceModeRef.current = false;
     setVoiceMode(false);
+    setMicMuted(false);
+    cleanupVoiceResources();
 
-    recognitionRef.current?.stop();
-    recognitionRef.current = null;
+    const socket = voiceSocketRef.current;
+    voiceSocketRef.current = null;
 
-    stopSpeech();
-    setListening(false);
-    transcriptRef.current = '';
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'stop' }));
+    } else if (
+      socket &&
+      socket.readyState !== WebSocket.CLOSED &&
+      socket.readyState !== WebSocket.CLOSING
+    ) {
+      socket.close();
+    }
+  };
+
+  const toggleVoicePlayback = async () => {
+    const audioContext = playbackContextRef.current;
+
+    if (!audioContext) return;
+
+    try {
+      if (voicePaused) {
+        await audioContext.resume();
+        setVoicePaused(false);
+      } else if (voiceSpeaking) {
+        await audioContext.suspend();
+        setVoicePaused(true);
+      } else {
+        replayAIResponse();
+      }
+    } catch (playbackError) {
+      setError('Unable to change audio playback state.');
+    }
+  };
+
+  const stopSpeech = () => {
+    stopAudioPlayback();
+  };
+
+  const replayAIResponse = async () => {
+    if (!voiceEnabledRef.current || lastAIChunksRef.current.length === 0) {
+      return;
+    }
+
+    stopAudioPlayback();
+
+    for (const chunk of lastAIChunksRef.current) {
+      await playAudioData(chunk);
+    }
   };
 
   const handleTextSubmit = async (e) => {
@@ -374,20 +681,15 @@ function DebateRoom() {
 
     if (!message.trim() || loading) return;
 
-    await submitArgument(message, false);
+    await submitArgument(message);
   };
 
-    const handleEndDebate = async () => {
+  const handleEndDebate = async () => {
     if (!debate?._id || endingDebate || loading || openingLoading) {
       return;
     }
 
-    const confirmed = window.confirm(
-      'Are you sure you want to end this debate and view your evaluation?'
-    );
-
-    if (!confirmed) return;
-
+    setShowEndConfirm(false);
     endVoiceDebate();
     setEndingDebate(true);
     setError('');
@@ -418,26 +720,122 @@ function DebateRoom() {
     }
   };
 
-  const replayAIResponse = () => {
-    const latestAIMessage = [...(debate?.messages || [])]
-      .reverse()
-      .find((item) => item.role === 'AI');
-
-    if (latestAIMessage?.content) {
-      speakText(latestAIMessage.content);
-    }
-  };
-
   useEffect(() => {
     return () => {
       voiceModeRef.current = false;
-      recognitionRef.current?.stop();
+      cleanupVoiceResources();
 
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
+      const socket = voiceSocketRef.current;
+      voiceSocketRef.current = null;
+
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'stop' }));
+      } else if (socket && socket.readyState !== WebSocket.CLOSED) {
+        socket.close();
       }
     };
   }, []);
+
+  const toggleMute = () => {
+    const nextMuted = !micMuted;
+    setMicMuted(nextMuted);
+
+    mediaStreamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = !nextMuted;
+    });
+  };
+
+  // Call timer
+  useEffect(() => {
+    if (!voiceMode) {
+      setVoiceSeconds(0);
+      return undefined;
+    }
+
+    const timer = setInterval(() => {
+      setVoiceSeconds((seconds) => seconds + 1);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [voiceMode]);
+
+  // Live audio level (drives the orb and waveform through a CSS variable)
+  useEffect(() => {
+    if (!voiceMode) return undefined;
+
+    const samples = new Uint8Array(512);
+    let frame;
+    let level = 0;
+    let talking = false;
+    let lastTalk = 0;
+
+    const measure = (analyser) => {
+      if (!analyser) return 0;
+
+      analyser.getByteTimeDomainData(samples);
+
+      let sum = 0;
+      for (let i = 0; i < samples.length; i += 1) {
+        const value = (samples[i] - 128) / 128;
+        sum += value * value;
+      }
+
+      return Math.sqrt(sum / samples.length);
+    };
+
+    const tick = (now) => {
+      const mic = measure(micAnalyserRef.current);
+      const ai = measure(playbackAnalyserRef.current);
+      const target = Math.min(1, Math.max(mic, ai) * 5);
+
+      level = level * 0.65 + target * 0.35;
+      stageRef.current?.style.setProperty('--level', level.toFixed(3));
+
+      if (mic > 0.035) {
+        lastTalk = now;
+
+        if (!talking) {
+          talking = true;
+          setUserTalking(true);
+        }
+      } else if (talking && now - lastTalk > 500) {
+        talking = false;
+        setUserTalking(false);
+      }
+
+      frame = requestAnimationFrame(tick);
+    };
+
+    frame = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      setUserTalking(false);
+    };
+  }, [voiceMode]);
+
+  // Keyboard shortcuts: M to mute, Esc to close the dialog
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape' && showEndConfirm) {
+        setShowEndConfirm(false);
+        return;
+      }
+
+      if (!voiceMode) return;
+
+      const tag = event.target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+      if (event.key === 'm' || event.key === 'M') {
+        event.preventDefault();
+        toggleMute();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [voiceMode, micMuted, showEndConfirm]);
 
   if (!debate) {
     return (
@@ -458,6 +856,8 @@ function DebateRoom() {
     .reverse()
     .find((item) => item.role === 'AI');
 
+  const aiPosition = debate.position === 'FOR' ? 'AGAINST' : 'FOR';
+  
   const evaluationCriteria = [
     {
       key: 'argumentQuality',
@@ -503,7 +903,8 @@ function DebateRoom() {
           <p>{debate.topic}</p>
         </div>
 
-        <div className="debate-verdict">
+        <div className={`debate-verdict winner-${(debate.winner || 'none').toLowerCase()}`}>
+          <Trophy size={26} className="verdict-icon" />
           <span className="verdict-label">FINAL VERDICT</span>
 
           <h2>
@@ -517,13 +918,13 @@ function DebateRoom() {
         </div>
 
         <div className="debate-score-cards">
-          <div className="debate-score-card user-score-card">
+          <div className={`debate-score-card user-score-card${debate.winner === 'USER' ? ' is-winner' : ''}`}>
             <span>YOUR SCORE</span>
             <strong>{Number(debate.userScore ?? 0).toFixed(1)}</strong>
             <small>OUT OF 10</small>
           </div>
 
-          <div className="debate-score-card ai-score-card">
+          <div className={`debate-score-card ai-score-card${debate.winner === 'AI' ? ' is-winner' : ''}`}>
             <span>DEBATEAI SCORE</span>
             <strong>{Number(debate.aiScore ?? 0).toFixed(1)}</strong>
             <small>OUT OF 10</small>
@@ -550,39 +951,21 @@ function DebateRoom() {
                     </div>
                   </div>
 
-                  <div className="criterion-scores">
-                    <div className="criterion-score-row">
-                      <span>You</span>
+                  <div className="criterion-score-cards">
+                    <div className="criterion-score-card user-criterion-score">
+                      <span className="criterion-player">YOU</span>
                       <strong>
-                        {scores?.userScore ?? '—'}/10
+                        {scores?.userScore ?? '—'}
+                        <small>/10</small>
                       </strong>
                     </div>
 
-                    <div className="criterion-score-row">
-                      <span>DebateAI</span>
+                    <div className="criterion-score-card ai-criterion-score">
+                      <span className="criterion-player">DEBATEAI</span>
                       <strong>
-                        {scores?.aiScore ?? '—'}/10
+                        {scores?.aiScore ?? '—'}
+                        <small>/10</small>
                       </strong>
-                    </div>
-                  </div>
-
-                  <div className="criterion-bars">
-                    <div className="criterion-bar-track">
-                      <div
-                        className="criterion-bar user-criterion-bar"
-                        style={{
-                          width: `${Math.max(0, Math.min(100, (scores?.userScore || 0) * 10))}%`
-                        }}
-                      />
-                    </div>
-
-                    <div className="criterion-bar-track">
-                      <div
-                        className="criterion-bar ai-criterion-bar"
-                        style={{
-                          width: `${Math.max(0, Math.min(100, (scores?.aiScore || 0) * 10))}%`
-                        }}
-                      />
                     </div>
                   </div>
                 </div>
@@ -660,32 +1043,199 @@ function DebateRoom() {
     );
   }
 
+  const isActive = debate.status === 'ACTIVE';
+  const messages = debate.messages || [];
+  const lastMessage = messages[messages.length - 1];
+  const userTurns = messages.filter((item) => item.role === 'USER').length;
+  const awaitingAI =
+    voiceMode &&
+    !micMuted &&
+    lastMessage?.role === 'USER' &&
+    String(lastMessage?._id || '').startsWith('live-');
+
+  let voicePhase = 'connecting';
+
+  if (voiceMode) {
+    if (voicePaused) voicePhase = 'paused';
+    else if (voiceSpeaking) voicePhase = 'speaking';
+    else if (loading || awaitingAI) voicePhase = 'thinking';
+    else if (userTalking && !micMuted) voicePhase = 'you';
+    else if (micMuted) voicePhase = 'muted';
+    else if (listening) voicePhase = 'listening';
+  }
+
+  const phaseText = PHASE_COPY[voicePhase];
+
+  const PhaseIcon =
+    voicePhase === 'speaking' || voicePhase === 'thinking'
+      ? Bot
+      : voicePhase === 'muted'
+        ? MicOff
+        : voicePhase === 'paused'
+          ? Pause
+          : Mic;
+
+  const handleTextKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleTextSubmit(e);
+    }
+  };
+
+  const handleTextChange = (e) => {
+    setMessage(e.target.value);
+
+    const el = e.target;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
+  };
+
+  const toggleVoiceOutput = () => {
+    const nextValue = !voiceEnabled;
+    voiceEnabledRef.current = nextValue;
+    setVoiceEnabled(nextValue);
+
+    if (!nextValue) {
+      stopSpeech();
+    } else {
+      replayAIResponse();
+    }
+  };
+
+  const handlePlaybackButton = () => {
+    if (voicePaused || voiceSpeaking) {
+      toggleVoicePlayback();
+    } else {
+      replayAIResponse();
+    }
+  };
+
+  const playbackDisabled =
+    !voiceEnabled ||
+    !voiceMode ||
+    (!voiceSpeaking &&
+      !voicePaused &&
+      lastAIChunksRef.current.length === 0);
+
+  const conversation = (
+    <div className="debate-conversation" ref={conversationRef}>
+      {messages.length === 0 && !openingLoading && (
+        <div className="debate-conversation-empty">
+          <Bot size={22} />
+          <p>
+            {voiceMode
+              ? 'Your transcript will appear here as you speak.'
+              : 'The floor is yours. Open with your strongest argument.'}
+          </p>
+        </div>
+      )}
+
+      {messages.map((item, index) => (
+        <div
+          key={item._id || index}
+          className={`debate-message ${
+            item.role === 'USER' ? 'user-message' : 'ai-message'
+          }`}
+        >
+          <div className="message-avatar">
+            {item.role === 'USER'
+              ? <UserRound size={18} />
+              : <Bot size={18} />}
+          </div>
+
+          <div className="message-content">
+            <span className="message-author">
+              {item.role === 'USER' ? 'YOU' : 'DEBATEAI'}
+            </span>
+
+            <p>
+              {item.role === 'AI' ? cleanAIText(item.content) : item.content}
+            </p>
+          </div>
+        </div>
+      ))}
+
+      {(openingLoading || loading) && (
+        <div className="debate-message ai-message typing-message">
+          <div className="message-avatar">
+            <Bot size={18} />
+          </div>
+
+          <div className="message-content">
+            <span className="message-author">DEBATEAI</span>
+
+            <div className="typing-dots" aria-hidden="true">
+              <i /><i /><i />
+            </div>
+
+            <small>
+              {openingLoading
+                ? 'Preparing its opening argument...'
+                : 'Preparing its response...'}
+            </small>
+          </div>
+        </div>
+      )}
+
+      <div ref={messagesEndRef} />
+    </div>
+  );
+
   return (
 
     <div className="debate-room">
       <div className="debate-room-heading">
-        <div>
+        <div className="debate-room-heading-main">
           <span className="debate-room-label">CURRENT SESSION</span>
           <h2>{debate.topic}</h2>
-          <p>
-            Your position: <strong>{debate.position}</strong>
-            {' · '}
-            Difficulty: <strong>{debate.difficulty}</strong>
-          </p>
+
+          <div className="debate-meta-chips">
+            <span className="meta-chip">
+              You <strong>{debate.position}</strong>
+            </span>
+            <span className="meta-chip">
+              DebateAI <strong>{aiPosition}</strong>
+            </span>
+            <span className="meta-chip">
+              Difficulty <strong>{debate.difficulty}</strong>
+            </span>
+            <span className="meta-chip">
+              Round <strong>{Math.max(userTurns, 1)}</strong>
+            </span>
+          </div>
         </div>
 
-        <span className={`debate-status ${debate.status.toLowerCase()}`}>
-          {debate.status}
-        </span>
+        <div className="debate-heading-side">
+          <span className={`debate-status ${debate.status.toLowerCase()}`}>
+            {debate.status}
+          </span>
+
+          {isActive && (
+            <button
+              type="button"
+              onClick={() => setShowEndConfirm(true)}
+              disabled={loading || openingLoading || endingDebate}
+              className="end-debate-button"
+            >
+              <Flag size={14} />
+              End & View Results
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="debate-mode-selector">
         <div className="debate-mode-heading">
-          <span>CHOOSE YOUR DEBATE MODE</span>
-          <p>Debate in the way that feels most comfortable.</p>
+          <span>DEBATE MODE</span>
+          <p>Type your arguments, or speak them out loud in a live debate.</p>
         </div>
 
-        <div className="debate-mode-buttons">
+        <div
+          className="debate-mode-buttons"
+          data-mode={voiceMode ? 'voice' : 'text'}
+        >
+          <span className="mode-slider" aria-hidden="true" />
+
           <button
             type="button"
             className={!voiceMode ? 'active' : ''}
@@ -701,173 +1251,269 @@ function DebateRoom() {
             onClick={voiceMode ? endVoiceDebate : startVoiceDebate}
             disabled={debate.status !== 'ACTIVE' || openingLoading}
           >
-            {voiceMode ? <MicOff size={17} /> : <Mic size={17} />}
-            {voiceMode ? 'End Voice Debate' : 'Start Voice Debate'}
+            <Mic size={17} />
+            {voiceMode ? 'Live Voice' : 'Voice Debate'}
           </button>
         </div>
-      </div>
-
-      {voiceMode && (
-        <div className="voice-session-status">
-          <span className={`voice-status-dot ${listening ? 'listening' : loading ? 'thinking' : voiceSpeaking ? 'speaking' : ''}`} />
-
-          <span>
-            {listening
-              ? 'Listening to your argument...'
-              : loading
-                ? 'DebateAI is preparing its response...'
-                : voiceSpeaking
-                  ? 'DebateAI is speaking...'
-                  : 'Voice session is active.'}
-          </span>
-        </div>
-      )}
-
-      <div className="debate-voice-toolbar">
-        <div className="voice-toolbar-label">
-          <Volume2 size={16} />
-          <span>AI VOICE CONTROLS</span>
-        </div>
-
-        <div className="voice-toolbar-controls">
-          <button
-            type="button"
-            onClick={() => {
-              const nextValue = !voiceEnabled;
-              voiceEnabledRef.current = nextValue;
-              setVoiceEnabled(nextValue);
-
-              if (!nextValue) {
-                stopSpeech();
-              } else {
-                replayAIResponse();
-              }
-            }}
-          >
-            {voiceEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
-            {voiceEnabled ? 'Voice On' : 'Voice Off'}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              if (voicePaused) {
-                window.speechSynthesis.resume();
-                setVoicePaused(false);
-              } else if (voiceSpeaking) {
-                window.speechSynthesis.pause();
-                setVoicePaused(true);
-              } else {
-                replayAIResponse();
-              }
-            }}
-            disabled={!voiceEnabled || !latestAIMessage?.content}
-          >
-            {voicePaused ? <Play size={15} /> : voiceSpeaking ? <Pause size={15} /> : <Play size={15} />}
-            {voicePaused ? 'Resume' : voiceSpeaking ? 'Pause' : 'Replay'}
-          </button>
-
-          <button
-            type="button"
-            onClick={stopSpeech}
-            disabled={!voiceSpeaking && !voicePaused}
-          >
-            <Square size={14} />
-            Stop
-          </button>
-        </div>
-      </div>
-
-      <div className="debate-conversation">
-        {debate.messages?.map((item, index) => (
-          <div
-            key={item._id || index}
-            className={`debate-message ${
-              item.role === 'USER' ? 'user-message' : 'ai-message'
-            }`}
-          >
-            <div className="message-avatar">
-              {item.role === 'USER'
-                ? <UserRound size={18} />
-                : <Bot size={18} />}
-            </div>
-
-            <div className="message-content">
-              <span className="message-author">
-                {item.role === 'USER' ? 'YOU' : 'DEBATEAI'}
-              </span>
-
-              <p>
-                {item.role === 'AI' ? cleanAIText(item.content) : item.content}
-              </p>
-            </div>
-          </div>
-        ))}
-
-        {openingLoading && (
-          <div className="ai-thinking">
-            DebateAI is preparing its opening argument...
-          </div>
-        )}
-
-        {loading && (
-          <div className="ai-thinking">
-            DebateAI is preparing its response...
-          </div>
-        )}
-
-        <div ref={messagesEndRef} />
       </div>
 
       {error && (
-        <p className="debate-room-error" role="alert">
-          {error}
-        </p>
+        <div className="debate-room-error" role="alert">
+          <span>{error}</span>
+          <button
+            type="button"
+            aria-label="Dismiss message"
+            onClick={() => setError('')}
+          >
+            <X size={15} />
+          </button>
+        </div>
       )}
 
-      {!voiceMode && debate.status === 'ACTIVE' && (
-        <form
-          className="debate-input-area"
-          onSubmit={handleTextSubmit}
-        >
-          <textarea
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            placeholder="Present your argument..."
-            rows={3}
-            maxLength={3000}
-            disabled={loading || openingLoading}
-          />
+      {voiceMode ? (
+        <div className="voice-layout">
+          <section
+            className="voice-stage"
+            ref={stageRef}
+            data-phase={voicePhase}
+          >
+            <div className="voice-stage-top">
+              <span className="live-pill">
+                <i /> LIVE
+              </span>
+              <span className="voice-timer">{formatTime(voiceSeconds)}</span>
+            </div>
 
-          <div className="debate-input-footer">
-            <span>{message.length}/3000 characters</span>
+            <div className="voice-orb-wrap">
+              <span className="orb-ring ring-3" />
+              <span className="orb-ring ring-2" />
+              <span className="orb-ring ring-1" />
 
-            <button
-              type="submit"
-              disabled={loading || openingLoading || !message.trim()}
-            >
-              {loading ? 'Thinking...' : 'Send Argument'}
-              <Send size={15} />
-            </button>
+              <div className="orb-scale">
+                <div className="voice-orb">
+                  <PhaseIcon size={38} strokeWidth={1.6} />
+                </div>
+              </div>
+            </div>
 
-            {debate?.status === 'ACTIVE' && (
+            <div className="voice-wave" aria-hidden="true">
+              {WAVE_BARS.map((bar) => (
+                <span
+                  key={bar.i}
+                  style={{ '--k': bar.k, '--i': bar.i }}
+                />
+              ))}
+            </div>
+
+            <div className="voice-phase" aria-live="polite">
+              <h3>{phaseText.title}</h3>
+              <p>{phaseText.hint}</p>
+            </div>
+
+            {lastMessage && (
+              <div className="voice-caption" key={lastMessage._id || messages.length}>
+                <span>
+                  {lastMessage.role === 'USER' ? 'YOU' : 'DEBATEAI'}
+                </span>
+                <p>
+                  {lastMessage.role === 'AI'
+                    ? cleanAIText(lastMessage.content)
+                    : lastMessage.content}
+                </p>
+              </div>
+            )}
+
+            <div className="voice-controls">
               <button
                 type="button"
-                onClick={handleEndDebate}
-                disabled={loading || openingLoading || endingDebate}
-                className="end-debate-button"
+                className={`vc-btn ${micMuted ? 'is-off' : ''}`}
+                onClick={toggleMute}
+                aria-pressed={micMuted}
+                title="Mute / unmute (M)"
               >
-                {endingDebate ? 'Evaluating Debate...' : 'End Debate & View Results'}
+                <i className="vc-icon">
+                  {micMuted ? <MicOff size={20} /> : <Mic size={20} />}
+                </i>
+                <span>{micMuted ? 'Unmute' : 'Mute'}</span>
               </button>
-            )}
-          </div>
-        </form>
+
+              <button
+                type="button"
+                className={`vc-btn ${!voiceEnabled ? 'is-off' : ''}`}
+                onClick={toggleVoiceOutput}
+                aria-pressed={!voiceEnabled}
+              >
+                <i className="vc-icon">
+                  {voiceEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+                </i>
+                <span>{voiceEnabled ? 'AI Voice' : 'Voice Off'}</span>
+              </button>
+
+              <button
+                type="button"
+                className="vc-btn"
+                onClick={handlePlaybackButton}
+                disabled={playbackDisabled}
+              >
+                <i className="vc-icon">
+                  {voiceSpeaking && !voicePaused
+                    ? <Pause size={19} />
+                    : voicePaused
+                      ? <Play size={19} />
+                      : <RotateCcw size={19} />}
+                </i>
+                <span>
+                  {voicePaused ? 'Resume' : voiceSpeaking ? 'Pause' : 'Replay'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                className="vc-btn"
+                onClick={stopSpeech}
+                disabled={!voiceSpeaking && !voicePaused}
+              >
+                <i className="vc-icon">
+                  <Square size={17} />
+                </i>
+                <span>Skip</span>
+              </button>
+
+              <button
+                type="button"
+                className="vc-btn vc-end"
+                onClick={endVoiceDebate}
+                title="Leave the voice session"
+              >
+                <i className="vc-icon">
+                  <PhoneOff size={20} />
+                </i>
+                <span>Leave</span>
+              </button>
+            </div>
+
+            <p className="voice-shortcut-hint">
+              Press <kbd>M</kbd> to mute · Speak over the AI to interrupt
+            </p>
+          </section>
+
+          <section className="voice-transcript">
+            <div className="voice-transcript-header">
+              <span>LIVE TRANSCRIPT</span>
+              <small>{messages.length} {messages.length === 1 ? 'message' : 'messages'}</small>
+            </div>
+
+            {conversation}
+          </section>
+        </div>
+      ) : (
+        <>
+          {conversation}
+
+          {isActive && (
+            <form
+              className="debate-input-area"
+              onSubmit={handleTextSubmit}
+            >
+              <textarea
+                ref={textareaRef}
+                value={message}
+                onChange={handleTextChange}
+                onKeyDown={handleTextKeyDown}
+                placeholder="Present your argument..."
+                rows={3}
+                maxLength={3000}
+                disabled={loading || openingLoading}
+              />
+
+              <div className="debate-input-footer">
+                <div className="debate-input-meta">
+                  <span className="char-count">
+                    {message.length}/3000
+                  </span>
+                  <span className="input-hint">
+                    <kbd>Enter</kbd> to send · <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line
+                  </span>
+                </div>
+
+                <button
+                  type="submit"
+                  className="send-argument-button"
+                  disabled={loading || openingLoading || !message.trim()}
+                >
+                  {loading ? 'Thinking...' : 'Send Argument'}
+                  <Send size={15} />
+                </button>
+              </div>
+            </form>
+          )}
+        </>
       )}
 
       {debate.status === 'COMPLETED' && (
         <p className="debate-completed-message">
           This debate has been completed.
         </p>
+      )}
+
+      {showEndConfirm && (
+        <div
+          className="debate-modal-overlay"
+          onClick={() => setShowEndConfirm(false)}
+        >
+          <div
+            className="debate-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="end-debate-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="modal-close"
+              aria-label="Close"
+              onClick={() => setShowEndConfirm(false)}
+            >
+              <X size={16} />
+            </button>
+
+            <span className="modal-icon">
+              <Flag size={20} />
+            </span>
+
+            <h3 id="end-debate-title">End this debate?</h3>
+            <p>
+              You have made {userTurns} {userTurns === 1 ? 'argument' : 'arguments'} so far.
+              Ending now sends the debate to the judge and shows your evaluation.
+            </p>
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="modal-secondary"
+                onClick={() => setShowEndConfirm(false)}
+              >
+                Keep debating
+              </button>
+
+              <button
+                type="button"
+                className="modal-primary"
+                onClick={handleEndDebate}
+              >
+                End & view results
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {endingDebate && (
+        <div className="debate-evaluating-overlay" role="status">
+          <span className="evaluating-spinner" />
+          <h3>Evaluating your debate</h3>
+          <p>The judge is scoring both sides. This takes a few seconds.</p>
+        </div>
       )}
     </div>
   );

@@ -168,7 +168,7 @@ const generateOpeningArgument = async (req, res) => {
         }
       },
       {
-        new: true
+        returnDocument: 'after'
       }
     );
 
@@ -359,9 +359,11 @@ Instructions:
 };
 
 const endDebate = async (req, res) => {
+  const debateId = req.params.id;
+
   try {
     const debate = await Debate.findOne({
-      _id: req.params.id,
+      _id: debateId,
       userId: req.user.id
     });
 
@@ -371,28 +373,29 @@ const endDebate = async (req, res) => {
       });
     }
 
-    if (debate.status === 'COMPLETED') {
+    if (
+      debate.status === 'COMPLETED' ||
+      debate.evaluationStatus === 'COMPLETED'
+    ) {
       return res.status(200).json({
-        message: 'This debate has already been evaluated.',
+        message: 'Debate has already been evaluated.',
         debate
       });
     }
 
-    const userHasSpoken = debate.messages.some(
+    const firstUserMessageIndex = debate.messages.findIndex(
       (item) => item.role === 'USER'
     );
 
-    const aiHasResponded = debate.messages.some(
-      (item, index) =>
-        item.role === 'AI' &&
-        debate.messages
-          .slice(0, index)
-          .some((previousItem) => previousItem.role === 'USER')
-    );
+    const hasAIResponse =
+      firstUserMessageIndex !== -1 &&
+      debate.messages.slice(firstUserMessageIndex + 1).some(
+        (item) => item.role === 'AI'
+      );
 
-    if (!userHasSpoken || !aiHasResponded) {
+    if (firstUserMessageIndex === -1 || !hasAIResponse) {
       return res.status(400).json({
-        message: 'Complete at least one exchange with the AI before ending the debate.'
+        message: 'The debate needs at least one user argument and one AI response before evaluation.'
       });
     }
 
@@ -401,7 +404,21 @@ const endDebate = async (req, res) => {
         _id: debate._id,
         userId: req.user.id,
         status: 'ACTIVE',
-        evaluationStatus: { $in: ['NOT_STARTED', 'FAILED'] }
+        $or: [
+          {
+            evaluationStatus: {
+              $in: ['NOT_STARTED', 'FAILED']
+            }
+          },
+          {
+            evaluationStatus: {
+              $exists: false
+            }
+          },
+          {
+            evaluationStatus: null
+          }
+        ]
       },
       {
         $set: {
@@ -409,7 +426,7 @@ const endDebate = async (req, res) => {
         }
       },
       {
-        new: true
+        returnDocument: 'after'
       }
     );
 
@@ -419,9 +436,12 @@ const endDebate = async (req, res) => {
         userId: req.user.id
       });
 
-      if (latestDebate?.status === 'COMPLETED') {
+      if (
+        latestDebate &&
+        latestDebate.evaluationStatus === 'COMPLETED'
+      ) {
         return res.status(200).json({
-          message: 'This debate has already been evaluated.',
+          message: 'Debate has already been evaluated.',
           debate: latestDebate
         });
       }
@@ -432,107 +452,133 @@ const endDebate = async (req, res) => {
       });
     }
 
-    const userPosition = claimedDebate.position;
-    const aiPosition = userPosition === 'FOR' ? 'AGAINST' : 'FOR';
-
     const conversation = claimedDebate.messages
       .map((item) => {
-        const speaker = item.role === 'USER'
-          ? `USER (${userPosition})`
-          : `AI (${aiPosition})`;
-
+        const speaker = item.role === 'USER' ? 'User' : 'AI';
         return `${speaker}: ${item.content}`;
       })
       .join('\n\n');
 
     const prompt = `
-You are an impartial professional debate judge for DebateAI.
+You are an impartial professional debate evaluator for DebateAI.
 
-Evaluate the complete debate below. The user and AI have argued opposite positions.
+Evaluate the following completed debate objectively.
 
-Topic: ${claimedDebate.topic}
-User's position: ${userPosition}
-AI's position: ${aiPosition}
+Debate topic: ${claimedDebate.topic}
+User's position: ${claimedDebate.position}
+AI's position: ${claimedDebate.position === 'FOR' ? 'AGAINST' : 'FOR'}
 Difficulty: ${claimedDebate.difficulty}
 
-DEBATE TRANSCRIPT:
+Debate conversation:
 ${conversation}
 
-Score BOTH participants independently on each criterion, from 0 to 10.
+Evaluate BOTH participants using these five criteria:
 
-CRITERIA AND WEIGHTS:
-1. argumentQuality: 30% - strength of claims, logical structure, depth of arguments.
-2. evidenceExamples: 25% - relevant evidence, facts, examples, and supporting details.
-3. rebuttals: 20% - ability to address and challenge the opposing arguments.
-4. clarityCommunication: 15% - clarity, organization, and effective communication.
-5. relevanceReasoning: 10% - relevance to the topic, consistency, and logical reasoning.
+1. argumentQuality (weight: 30)
+Evaluate the strength, structure, and logical consistency of arguments.
 
-Judging rules:
-- Judge only what is present in the transcript.
-- Be fair to both sides and use the same standards.
-- Do not favor the AI.
-- Do not reward length alone.
-- Do not invent facts or evidence that a participant did not provide.
-- Consider the selected difficulty when judging complexity.
-- Give constructive, specific feedback.
+2. evidenceExamples (weight: 25)
+Evaluate the quality and relevance of evidence, facts, and examples.
 
-Return ONLY valid JSON. Do not include Markdown fences or any text outside the JSON.
-Use exactly this structure:
+3. rebuttals (weight: 20)
+Evaluate how effectively each participant addressed and challenged opposing arguments.
+
+4. clarityCommunication (weight: 15)
+Evaluate clarity, organization, and communication.
+
+5. relevanceReasoning (weight: 10)
+Evaluate relevance to the topic and quality of reasoning.
+
+Scoring rules:
+- Give each participant a score from 0 to 10 for every criterion.
+- Be fair and objective.
+- Do not favour the AI.
+- Consider the selected difficulty.
+- A higher overall weighted score determines the winner.
+- Return valid JSON only. Do not include markdown code fences.
+
+Return this exact JSON structure:
 
 {
-  "scores": {
-    "argumentQuality": { "userScore": 0, "aiScore": 0 },
-    "evidenceExamples": { "userScore": 0, "aiScore": 0 },
-    "rebuttals": { "userScore": 0, "aiScore": 0 },
-    "clarityCommunication": { "userScore": 0, "aiScore": 0 },
-    "relevanceReasoning": { "userScore": 0, "aiScore": 0 }
+  "criterionScores": {
+    "argumentQuality": {
+      "userScore": 0,
+      "aiScore": 0
+    },
+    "evidenceExamples": {
+      "userScore": 0,
+      "aiScore": 0
+    },
+    "rebuttals": {
+      "userScore": 0,
+      "aiScore": 0
+    },
+    "clarityCommunication": {
+      "userScore": 0,
+      "aiScore": 0
+    },
+    "relevanceReasoning": {
+      "userScore": 0,
+      "aiScore": 0
+    }
   },
-  "summary": "A concise overall explanation of the debate result.",
-  "userFeedback": "Specific feedback for the user.",
-  "aiFeedback": "A brief assessment of the AI participant.",
-  "userStrengths": ["Strength one", "Strength two"],
-  "userImprovements": ["Improvement one", "Improvement two"],
-  "aiStrengths": ["Strength one", "Strength two"]
+  "feedback": "Overall evaluation feedback",
+  "summary": "Short debate summary",
+  "userFeedback": "Specific feedback for the user",
+  "aiFeedback": "Specific feedback for the AI",
+  "strengths": ["Strength 1", "Strength 2"],
+  "improvements": ["Improvement 1", "Improvement 2"],
+  "userStrengths": ["User strength 1"],
+  "userImprovements": ["User improvement 1"],
+  "aiStrengths": ["AI strength 1"]
 }
 `;
 
-    const aiEvaluationResponse = await generateAIResponse(prompt);
-    const parsedEvaluation = parseEvaluationResponse(aiEvaluationResponse);
+    const aiResponse = await generateAIResponse(prompt);
+    const result = parseEvaluationResponse(aiResponse);
 
-    validateCriterionScores(parsedEvaluation.scores);
+    validateCriterionScores(result.criterionScores);
 
     const criterionScores = {};
 
     for (const [criterion, weight] of Object.entries(evaluationWeights)) {
       criterionScores[criterion] = {
-        userScore: parsedEvaluation.scores[criterion].userScore,
-        aiScore: parsedEvaluation.scores[criterion].aiScore,
+        userScore: result.criterionScores[criterion].userScore,
+        aiScore: result.criterionScores[criterion].aiScore,
         weight
       };
     }
 
-    const userWeightedScore = Object.entries(criterionScores).reduce(
-      (total, [criterion, result]) =>
-        total + result.userScore * evaluationWeights[criterion] / 100,
-      0
+    const calculateWeightedScore = (participant) =>
+      roundScore(
+        Object.entries(evaluationWeights).reduce(
+          (total, [criterion, weight]) =>
+            total +
+            criterionScores[criterion][participant] * weight,
+          0
+        ) / 100
+      );
+
+    const userScore = calculateWeightedScore('userScore');
+    const aiScore = calculateWeightedScore('aiScore');
+
+    const winner =
+      Math.abs(userScore - aiScore) <= 0.1
+        ? 'DRAW'
+        : userScore > aiScore
+          ? 'USER'
+          : 'AI';
+
+    const argumentation = roundScore(
+      (
+        criterionScores.argumentQuality.userScore * 30 +
+        criterionScores.evidenceExamples.userScore * 25 +
+        criterionScores.rebuttals.userScore * 20
+      ) / 75
     );
 
-    const aiWeightedScore = Object.entries(criterionScores).reduce(
-      (total, [criterion, result]) =>
-        total + result.aiScore * evaluationWeights[criterion] / 100,
-      0
-    );
-
-    const userScore = roundScore(userWeightedScore);
-    const aiScore = roundScore(aiWeightedScore);
-
-    let winner = 'DRAW';
-
-    if (userScore > aiScore) {
-      winner = 'USER';
-    } else if (aiScore > userScore) {
-      winner = 'AI';
-    }
+    const clarity = criterionScores.clarityCommunication.userScore;
+    const relevance = criterionScores.relevanceReasoning.userScore;
 
     claimedDebate.criterionScores = criterionScores;
     claimedDebate.userScore = userScore;
@@ -541,28 +587,18 @@ Use exactly this structure:
 
     claimedDebate.evaluation = {
       overallScore: userScore,
-      argumentation: criterionScores.argumentQuality.userScore,
-      clarity: criterionScores.clarityCommunication.userScore,
-      relevance: criterionScores.relevanceReasoning.userScore,
-      feedback: parsedEvaluation.userFeedback || '',
-      strengths: Array.isArray(parsedEvaluation.userStrengths)
-        ? parsedEvaluation.userStrengths
-        : [],
-      improvements: Array.isArray(parsedEvaluation.userImprovements)
-        ? parsedEvaluation.userImprovements
-        : [],
-      summary: parsedEvaluation.summary || '',
-      userFeedback: parsedEvaluation.userFeedback || '',
-      aiFeedback: parsedEvaluation.aiFeedback || '',
-      userStrengths: Array.isArray(parsedEvaluation.userStrengths)
-        ? parsedEvaluation.userStrengths
-        : [],
-      userImprovements: Array.isArray(parsedEvaluation.userImprovements)
-        ? parsedEvaluation.userImprovements
-        : [],
-      aiStrengths: Array.isArray(parsedEvaluation.aiStrengths)
-        ? parsedEvaluation.aiStrengths
-        : []
+      argumentation,
+      clarity,
+      relevance,
+      feedback: result.feedback || '',
+      summary: result.summary || '',
+      userFeedback: result.userFeedback || '',
+      aiFeedback: result.aiFeedback || '',
+      strengths: result.strengths || [],
+      improvements: result.improvements || [],
+      userStrengths: result.userStrengths || [],
+      userImprovements: result.userImprovements || [],
+      aiStrengths: result.aiStrengths || []
     };
 
     claimedDebate.evaluationStatus = 'COMPLETED';
@@ -576,24 +612,28 @@ Use exactly this structure:
     });
 
   } catch (error) {
-    console.error('End debate evaluation error:', error.message);
+    console.error('End debate error:', error.message);
 
-    await Debate.findOneAndUpdate(
-      {
-        _id: req.params.id,
-        userId: req.user.id,
-        evaluationStatus: 'GENERATING',
-        status: 'ACTIVE'
-      },
-      {
-        $set: {
-          evaluationStatus: 'FAILED'
+    try {
+      await Debate.findOneAndUpdate(
+        {
+          _id: debateId,
+          userId: req.user.id,
+          status: 'ACTIVE',
+          evaluationStatus: 'GENERATING'
+        },
+        {
+          $set: {
+            evaluationStatus: 'FAILED'
+          }
         }
-      }
-    );
+      );
+    } catch (resetError) {
+      console.error('Evaluation status reset error:', resetError.message);
+    }
 
     return res.status(500).json({
-      message: 'Unable to evaluate the debate. You can try again.',
+      message: 'Unable to evaluate the debate.',
       error: error.message
     });
   }
