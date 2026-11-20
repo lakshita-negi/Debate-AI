@@ -1591,3 +1591,67 @@ kbd {
     transition-duration: 0.01ms !important;
   }
 }
+
+
+.debate-countdown {
+  position: fixed;
+  top: 16px;
+  right: 24px;
+  z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 15px;
+  border: 1px solid #D8BFC2;
+  border-radius: 8px;
+  background: #FAF7F6;
+  color: #694F5A;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 4px 16px rgba(48, 39, 43, 0.12);
+}
+
+.debate-countdown strong {
+  margin-left: 3px;
+  color: #30272B;
+  font-size: 15px;
+  letter-spacing: 1px;
+}
+
+.debate-countdown.urgent {
+  border-color: #D99B83;
+  background: #FBF1F1;
+  color: #B04444;
+}
+
+.debate-countdown.urgent strong {
+  color: #B04444;
+}
+
+@media (max-width: 650px) {
+  .debate-countdown {
+    top: 10px;
+    right: 10px;
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .debate-countdown strong {
+    font-size: 14px;
+  }
+
+  .debate-room-heading {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .debate-heading-side {
+    align-items: flex-start;
+  }
+
+  .debate-countdown {
+    width: fit-content;
+  }
+}

@@ -1,7 +1,7 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Check, Shuffle } from 'lucide-react';
+import { ArrowRight, Check, Shuffle, Clock3 } from 'lucide-react';
 import './StartDebate.css';
 
 const topics = [
@@ -47,6 +47,24 @@ const categories = [
   'POLITICS'
 ];
 
+const durations = [
+  {
+    value: 5,
+    title: '5 Minutes',
+    description: 'A quick exchange of arguments.'
+  },
+  {
+    value: 10,
+    title: '10 Minutes',
+    description: 'A balanced and focused debate.'
+  },
+  {
+    value: 30,
+    title: '30 Minutes',
+    description: 'An extended, in-depth discussion.'
+  }
+];
+
 function StartDebate() {
   const navigate = useNavigate();
 
@@ -55,6 +73,7 @@ function StartDebate() {
   const [customTopic, setCustomTopic] = useState('');
   const [position, setPosition] = useState('random');
   const [difficulty, setDifficulty] = useState('intermediate');
+  const [duration, setDuration] = useState(10);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -87,18 +106,22 @@ function StartDebate() {
     setError('');
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/debates/start`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          topic: activeTopic,
-          position,
-          difficulty
-        })
-      });
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/debates/start`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            topic: activeTopic,
+            position,
+            difficulty,
+            duration
+          })
+        }
+      );
 
       const data = await response.json();
 
@@ -145,7 +168,7 @@ function StartDebate() {
             <span className="debate-eyebrow">01 / SELECT A SUBJECT</span>
             <h2>What shall we discuss?</h2>
           </div>
-          <span className="debate-step">STEP 01 OF 03</span>
+          <span className="debate-step">STEP 01 OF 04</span>
         </div>
 
         <div className="topic-filters">
@@ -210,7 +233,7 @@ function StartDebate() {
             <span className="debate-eyebrow">02 / DEFINE YOUR POSITION</span>
             <h2>Which side will you take?</h2>
           </div>
-          <span className="debate-step">STEP 02 OF 03</span>
+          <span className="debate-step">STEP 02 OF 04</span>
         </div>
 
         <div className="position-options">
@@ -252,7 +275,7 @@ function StartDebate() {
             <span className="debate-eyebrow">03 / SET YOUR CHALLENGE</span>
             <h2>Choose your level.</h2>
           </div>
-          <span className="debate-step">STEP 03 OF 03</span>
+          <span className="debate-step">STEP 03 OF 04</span>
         </div>
 
         <div className="difficulty-options">
@@ -289,6 +312,44 @@ function StartDebate() {
             </button>
           ))}
         </div>
+      </section>
+
+      <section className="duration-section">
+        <div className="debate-section-heading">
+          <div>
+            <span className="debate-eyebrow">04 / SET YOUR TIME LIMIT</span>
+            <h2>How long shall we debate?</h2>
+          </div>
+          <span className="debate-step">STEP 04 OF 04</span>
+        </div>
+
+        <div className="duration-options">
+          {durations.map(item => (
+            <button
+              type="button"
+              key={item.value}
+              className={duration === item.value ? 'duration-option active' : 'duration-option'}
+              onClick={() => setDuration(item.value)}
+            >
+              <span className="duration-icon">
+                <Clock3 size={19} />
+              </span>
+
+              <span className="duration-details">
+                <strong>{item.title}</strong>
+                <small>{item.description}</small>
+              </span>
+
+              <span className="duration-radio">
+                {duration === item.value && <span />}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        <p className="duration-note">
+          Your debate will automatically end when the selected time runs out.
+        </p>
       </section>
 
       <section className="debate-launch">

@@ -108,7 +108,6 @@ function Home() {
             alt="A grand academic library filled with books"
           />
           <figcaption>
-            <span>01 — A SPACE FOR OPEN DISCUSSION AND INTELLECTUAL CURIOSITY</span>
             <span>DEBATEAI / EST. 2026</span>
           </figcaption>
         </figure>
@@ -223,7 +222,6 @@ function Home() {
             src="https://images.unsplash.com/photo-1455390582262-044cdead277a?w=1000&q=85"
             alt="An open notebook and pen on a writing desk"
           />
-          <span>FIG. 02 — THE PRACTICE OF REFLECTION</span>
         </div>
 
         <div className="philosophy-content">

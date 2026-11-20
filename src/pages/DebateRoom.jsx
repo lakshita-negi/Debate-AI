@@ -15,9 +15,9 @@ import {
   Keyboard,
   RotateCcw,
   PhoneOff,
-  Flag,
   X,
-  Trophy
+  Trophy,
+  Clock3
 } from 'lucide-react';
 import './DebateRoom.css';
 
@@ -111,7 +111,7 @@ function DebateRoom() {
   const [micMuted, setMicMuted] = useState(false);
   const [userTalking, setUserTalking] = useState(false);
   const [voiceSeconds, setVoiceSeconds] = useState(0);
-  const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [remainingSeconds, setRemainingSeconds] = useState(null);
 
   const messagesEndRef = useRef(null);
   const voiceModeRef = useRef(false);
@@ -128,6 +128,8 @@ function DebateRoom() {
   const currentAIChunksRef = useRef([]);
   const lastAIChunksRef = useRef([]);
   const loadingRef = useRef(false);
+  const autoEndTriggeredRef = useRef(false);
+  const autoEndDebateIdRef = useRef(null);
   const stageRef = useRef(null);
   const conversationRef = useRef(null);
   const textareaRef = useRef(null);
@@ -435,7 +437,8 @@ function DebateRoom() {
       !trimmedMessage ||
       loadingRef.current ||
       openingLoading ||
-      !debate?._id
+      !debate?._id ||
+      (debate.endsAt && Date.now() >= new Date(debate.endsAt).getTime())
     ) return;
 
     try {
@@ -476,7 +479,12 @@ function DebateRoom() {
   };
 
   const startVoiceDebate = async () => {
-    if (openingLoading || voiceModeRef.current) return;
+    if (
+      openingLoading ||
+      voiceModeRef.current ||
+      debate?.status !== 'ACTIVE' ||
+      (debate?.endsAt && Date.now() >= new Date(debate.endsAt).getTime())
+    ) return;
 
     if (!navigator.mediaDevices?.getUserMedia) {
       setError('Microphone access is unavailable. Open the app on localhost or HTTPS and check browser permissions.');
@@ -684,12 +692,14 @@ function DebateRoom() {
     await submitArgument(message);
   };
 
-  const handleEndDebate = async () => {
-    if (!debate?._id || endingDebate || loading || openingLoading) {
+  const handleEndDebate = async (automatic = false) => {
+    if (!debate?._id || endingDebate) return;
+
+    if (loading || openingLoading) {
+      if (automatic) autoEndTriggeredRef.current = false;
       return;
     }
 
-    setShowEndConfirm(false);
     endVoiceDebate();
     setEndingDebate(true);
     setError('');
@@ -719,6 +729,39 @@ function DebateRoom() {
       setEndingDebate(false);
     }
   };
+
+  useEffect(() => {
+    if (!debate?._id || debate.status !== 'ACTIVE' || !debate.endsAt) {
+      setRemainingSeconds(null);
+      return undefined;
+    }
+
+    if (autoEndDebateIdRef.current !== debate._id) {
+      autoEndDebateIdRef.current = debate._id;
+      autoEndTriggeredRef.current = false;
+    }
+
+    const updateCountdown = () => {
+      const deadline = new Date(debate.endsAt).getTime();
+      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      setRemainingSeconds(remaining);
+
+      if (
+        remaining === 0 &&
+        !autoEndTriggeredRef.current &&
+        !loadingRef.current &&
+        !openingLoading &&
+        !endingDebate
+      ) {
+        autoEndTriggeredRef.current = true;
+        handleEndDebate(true);
+      }
+    };
+
+    updateCountdown();
+    const timer = window.setInterval(updateCountdown, 1000);
+    return () => window.clearInterval(timer);
+  }, [debate?._id, debate?.endsAt, debate?.status, loading, openingLoading, endingDebate]);
 
   useEffect(() => {
     return () => {
@@ -814,14 +857,9 @@ function DebateRoom() {
     };
   }, [voiceMode]);
 
-  // Keyboard shortcuts: M to mute, Esc to close the dialog
+  // Keyboard shortcut: M to mute during voice debates
   useEffect(() => {
     const onKeyDown = (event) => {
-      if (event.key === 'Escape' && showEndConfirm) {
-        setShowEndConfirm(false);
-        return;
-      }
-
       if (!voiceMode) return;
 
       const tag = event.target?.tagName;
@@ -835,7 +873,7 @@ function DebateRoom() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [voiceMode, micMuted, showEndConfirm]);
+  }, [voiceMode, micMuted]);
 
   if (!debate) {
     return (
@@ -1044,6 +1082,10 @@ function DebateRoom() {
   }
 
   const isActive = debate.status === 'ACTIVE';
+  const timeExpired = Boolean(
+    debate.endsAt &&
+    (remainingSeconds === 0 || Date.now() >= new Date(debate.endsAt).getTime())
+  );
   const messages = debate.messages || [];
   const lastMessage = messages[messages.length - 1];
   const userTurns = messages.filter((item) => item.role === 'USER').length;
@@ -1206,21 +1248,22 @@ function DebateRoom() {
         </div>
 
         <div className="debate-heading-side">
+          {isActive && debate.endsAt && (
+            <div
+              className={`debate-countdown ${remainingSeconds !== null && remainingSeconds <= 60 ? 'urgent' : ''}`}
+              role="timer"
+              aria-label={`Time remaining ${formatTime(remainingSeconds ?? 0)}`}
+            >
+              <Clock3 size={16} />
+              <span>Time remaining</span>
+              <strong>{remainingSeconds === null ? '--:--' : formatTime(remainingSeconds)}</strong>
+            </div>
+          )}
+
           <span className={`debate-status ${debate.status.toLowerCase()}`}>
             {debate.status}
           </span>
 
-          {isActive && (
-            <button
-              type="button"
-              onClick={() => setShowEndConfirm(true)}
-              disabled={loading || openingLoading || endingDebate}
-              className="end-debate-button"
-            >
-              <Flag size={14} />
-              End & View Results
-            </button>
-          )}
         </div>
       </div>
 
@@ -1249,7 +1292,7 @@ function DebateRoom() {
             type="button"
             className={voiceMode ? 'active' : ''}
             onClick={voiceMode ? endVoiceDebate : startVoiceDebate}
-            disabled={debate.status !== 'ACTIVE' || openingLoading}
+            disabled={debate.status !== 'ACTIVE' || openingLoading || timeExpired || endingDebate}
           >
             <Mic size={17} />
             {voiceMode ? 'Live Voice' : 'Voice Debate'}
@@ -1423,7 +1466,7 @@ function DebateRoom() {
                 placeholder="Present your argument..."
                 rows={3}
                 maxLength={3000}
-                disabled={loading || openingLoading}
+                disabled={loading || openingLoading || timeExpired || endingDebate}
               />
 
               <div className="debate-input-footer">
@@ -1439,7 +1482,7 @@ function DebateRoom() {
                 <button
                   type="submit"
                   className="send-argument-button"
-                  disabled={loading || openingLoading || !message.trim()}
+                  disabled={loading || openingLoading || timeExpired || endingDebate || !message.trim()}
                 >
                   {loading ? 'Thinking...' : 'Send Argument'}
                   <Send size={15} />
@@ -1454,58 +1497,6 @@ function DebateRoom() {
         <p className="debate-completed-message">
           This debate has been completed.
         </p>
-      )}
-
-      {showEndConfirm && (
-        <div
-          className="debate-modal-overlay"
-          onClick={() => setShowEndConfirm(false)}
-        >
-          <div
-            className="debate-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="end-debate-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              className="modal-close"
-              aria-label="Close"
-              onClick={() => setShowEndConfirm(false)}
-            >
-              <X size={16} />
-            </button>
-
-            <span className="modal-icon">
-              <Flag size={20} />
-            </span>
-
-            <h3 id="end-debate-title">End this debate?</h3>
-            <p>
-              You have made {userTurns} {userTurns === 1 ? 'argument' : 'arguments'} so far.
-              Ending now sends the debate to the judge and shows your evaluation.
-            </p>
-
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="modal-secondary"
-                onClick={() => setShowEndConfirm(false)}
-              >
-                Keep debating
-              </button>
-
-              <button
-                type="button"
-                className="modal-primary"
-                onClick={handleEndDebate}
-              >
-                End & view results
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {endingDebate && (

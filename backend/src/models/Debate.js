@@ -73,6 +73,20 @@ const debateSchema = new mongoose.Schema(
       default: 'intermediate'
     },
 
+    duration: {
+      type: Number,
+      enum: [5, 10, 30]
+    },
+
+    startedAt: {
+      type: Date
+    },
+
+    endsAt: {
+      type: Date,
+      index: true
+    },
+
     status: {
       type: String,
       enum: ['ACTIVE', 'COMPLETED'],
