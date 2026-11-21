@@ -516,11 +516,15 @@ function DebateRoom() {
       playbackAnalyser.connect(playbackContextRef.current.destination);
       playbackAnalyserRef.current = playbackAnalyser;
 
-      const socketProtocol = window.location.protocol === 'https:'
+      const backendUrl = new URL(API_URL, window.location.origin);
+
+      const socketProtocol = backendUrl.protocol === 'https:'
         ? 'wss:'
         : 'ws:';
-      const socketHost = window.location.hostname === 'localhost' ? 'localhost:5000' : window.location.host;
-      const socketUrl = `${socketProtocol}//${socketHost}/api/debates/voice`;
+
+      const socketPath = `${backendUrl.pathname.replace(/\/$/, '')}/debates/voice`;
+
+      const socketUrl = `${socketProtocol}//${backendUrl.host}${socketPath}`;
 
       const socket = new WebSocket(socketUrl);
       voiceSocketRef.current = socket;
