@@ -223,6 +223,7 @@ function DebateRoom() {
     setVoicePaused(false);
   };
 
+  
   const playAudioData = async (base64Audio) => {
     const audioContext = playbackContextRef.current;
 
@@ -251,6 +252,7 @@ function DebateRoom() {
         pcmData.length,
         24000
       );
+
       const channel = audioBuffer.getChannelData(0);
 
       for (let i = 0; i < pcmData.length; i += 1) {
@@ -259,12 +261,16 @@ function DebateRoom() {
 
       const source = audioContext.createBufferSource();
       source.buffer = audioBuffer;
-      source.connect(playbackAnalyserRef.current || audioContext.destination);
-
-      const startAt = Math.max(
-        audioContext.currentTime + 0.02,
-        nextPlayTimeRef.current
+      source.connect(
+        playbackAnalyserRef.current || audioContext.destination
       );
+
+      const hasQueuedAudio =
+        nextPlayTimeRef.current > audioContext.currentTime;
+
+      const startAt = hasQueuedAudio
+        ? nextPlayTimeRef.current
+        : audioContext.currentTime + 0.12;
 
       source.onended = () => {
         playbackSourcesRef.current.delete(source);
@@ -275,14 +281,18 @@ function DebateRoom() {
       };
 
       playbackSourcesRef.current.add(source);
+
       source.start(startAt);
+
       nextPlayTimeRef.current = startAt + audioBuffer.duration;
+
       setVoiceSpeaking(true);
     } catch (audioError) {
       console.error('Unable to play Gemini audio:', audioError);
       setError('Unable to play the AI voice response.');
     }
   };
+
 
   const encodeAudioForGemini = (audioData, inputSampleRate) => {
     const targetSampleRate = 16000;

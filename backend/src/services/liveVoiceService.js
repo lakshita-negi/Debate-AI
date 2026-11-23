@@ -55,6 +55,8 @@ YOUR RESPONSIBILITIES:
 This is a live voice conversation. Respond with natural speech rather than formatted essays or lists.
 `;
 
+  let messageQueue = Promise.resolve();
+
   const session = await ai.live.connect({
     model: LIVE_MODEL,
     config: {
@@ -95,7 +97,12 @@ This is a live voice conversation. Respond with natural speech rather than forma
       },
 
       onmessage: (message) => {
-        onMessage(message);
+        messageQueue = messageQueue
+          .then(() => onMessage(message))
+          .catch((error) => {
+            console.error('Gemini message processing error:', error.message);
+            onError(error);
+          });
       },
 
       onerror: (error) => {

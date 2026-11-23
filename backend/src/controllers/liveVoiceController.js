@@ -124,6 +124,7 @@ const handleLiveVoiceConnection = (socket) => {
     });
   };
 
+  
   const handleGeminiMessage = async (message) => {
     const serverContent = message.serverContent;
 
@@ -132,31 +133,13 @@ const handleLiveVoiceConnection = (socket) => {
     }
 
     if (serverContent.interrupted) {
-      await flushTranscript('AI');
+      flushTranscript('AI');
 
       aiResponseActive = false;
 
       sendToClient(socket, {
         type: 'interrupted'
       });
-    }
-
-    if (serverContent.inputTranscription?.text) {
-      appendTranscript(
-        'USER',
-        serverContent.inputTranscription.text
-      );
-    }
-
-    if (serverContent.outputTranscription?.text) {
-      await flushTranscript('USER');
-
-      notifyAIStarted();
-
-      appendTranscript(
-        'AI',
-        serverContent.outputTranscription.text
-      );
     }
 
     const audioParts = serverContent.modelTurn?.parts || [];
@@ -176,8 +159,26 @@ const handleLiveVoiceConnection = (socket) => {
       }
     }
 
+    if (serverContent.inputTranscription?.text) {
+      appendTranscript(
+        'USER',
+        serverContent.inputTranscription.text
+      );
+    }
+
+    if (serverContent.outputTranscription?.text) {
+      flushTranscript('USER');
+
+      notifyAIStarted();
+
+      appendTranscript(
+        'AI',
+        serverContent.outputTranscription.text
+      );
+    }
+
     if (serverContent.turnComplete) {
-      await flushAllTranscripts();
+      flushAllTranscripts();
 
       aiResponseActive = false;
 
@@ -186,6 +187,7 @@ const handleLiveVoiceConnection = (socket) => {
       });
     }
   };
+
 
   const startSession = async (data) => {
     if (authenticated) {
